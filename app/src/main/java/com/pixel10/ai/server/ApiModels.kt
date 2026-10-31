@@ -1,16 +1,98 @@
 package com.pixel10.ai.server
 
+import com.google.gson.JsonDeserializationContext
+import com.google.gson.JsonDeserializer
+import com.google.gson.JsonElement
+import com.google.gson.JsonNull
 import com.google.gson.JsonObject
+import com.google.gson.JsonPrimitive
+import com.google.gson.JsonSerializationContext
+import com.google.gson.JsonSerializer
+import com.google.gson.annotations.JsonAdapter
 import com.google.gson.annotations.SerializedName
+import java.lang.reflect.Type
 
 /**
  * Request/response models for the AI API.
  * Follows the OpenAI Chat Completions schema for easy integration with
- * any OpenAI-compatible client (OpenClaw, LM Studio, Open WebUI, etc.).
+ * any OpenAI-compatible client (OpenClaw, LM Studio, Open WebUI, Agora, etc.).
  *
  * Tool/function calling is fully supported so coding agents can invoke
  * tools (read_file, run_shell, etc.) through the standard OpenAI tool-use flow.
  */
+
+// ── Custom Gson Adapters (Agora / OpenAI Multimodal Compatibility) ────────────
+
+/**
+ * Handles both classic string content ("content": "hello") and OpenAI/Agora
+ * array content ("content": [{"type": "text", "text": "hello"}]).
+ */
+class FlexibleContentAdapter : JsonDeserializer<String?>, JsonSerializer<String?> {
+    override fun deserialize(
+        json: JsonElement?,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?
+    ): String? {
+        if (json == null || json.isJsonNull) return null
+        if (json.isJsonPrimitive) return json.asString
+        if (json.isJsonArray) {
+            return json.asJsonArray.mapNotNull { element ->
+                when {
+                    element.isJsonPrimitive -> element.asString
+                    element.isJsonObject -> {
+                        val obj = element.asJsonObject
+                        when {
+                            obj.has("text") && !obj.get("text").isJsonNull ->
+                                obj.get("text").asString
+                            obj.has("content") && !obj.get("content").isJsonNull ->
+                                obj.get("content").asString
+                            else -> null
+                        }
+                    }
+                    else -> null
+                }
+            }.joinToString("\n")
+        }
+        if (json.isJsonObject) {
+            val obj = json.asJsonObject
+            if (obj.has("text") && !obj.get("text").isJsonNull) {
+                return obj.get("text").asString
+            }
+        }
+        return json.toString()
+    }
+
+    override fun serialize(
+        src: String?,
+        typeOfSrc: Type?,
+        context: JsonSerializationContext?
+    ): JsonElement {
+        return if (src == null) JsonNull.INSTANCE else JsonPrimitive(src)
+    }
+}
+
+/**
+ * Prevents crashes if a client sends tool_choice as a JSON object instead of a string.
+ */
+class FlexibleToolChoiceAdapter : JsonDeserializer<String?>, JsonSerializer<String?> {
+    override fun deserialize(
+        json: JsonElement?,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?
+    ): String? {
+        if (json == null || json.isJsonNull) return null
+        if (json.isJsonPrimitive) return json.asString
+        return json.toString()
+    }
+
+    override fun serialize(
+        src: String?,
+        typeOfSrc: Type?,
+        context: JsonSerializationContext?
+    ): JsonElement {
+        return if (src == null) JsonNull.INSTANCE else JsonPrimitive(src)
+    }
+}
 
 // ── Requests ──────────────────────────────────────────────────────────────────
 
@@ -24,12 +106,14 @@ data class ChatRequest(
     /** Tool/function definitions available to the model. */
     val tools: List<Tool>? = null,
     /** "auto" | "none" | "required" — defaults to "auto" when tools are provided. */
+    @JsonAdapter(FlexibleToolChoiceAdapter::class)
     val tool_choice: String? = null
 )
 
 data class Message(
     val role: String = "user",
     /** Text content. Null when role=assistant and the model is calling a tool. */
+    @JsonAdapter(FlexibleContentAdapter::class)
     val content: String? = null,
     /** Set by the model when it wants to call one or more tools. */
     val tool_calls: List<ToolCall>? = null,
