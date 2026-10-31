@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -16,8 +18,10 @@ android {
     }
 
     val localProps = rootProject.file("local.properties")
-    val props = java.util.Properties().apply {
-        if (localProps.exists()) load(localProps.inputStream())
+    val props = Properties().apply {
+        if (localProps.exists()) {
+            localProps.inputStream().use { load(it) }
+        }
     }
     val keystoreFile = rootProject.file(props.getProperty("KEYSTORE_FILE", "pixel10.keystore"))
 
